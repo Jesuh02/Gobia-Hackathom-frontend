@@ -6,10 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint .",
-    "pages:build": "next build",
-    "preview": "npx wrangler pages dev out",
-    "deploy": "next build && npx wrangler pages deploy out"
+    "lint": "eslint ."
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
