@@ -55,7 +55,7 @@ function ContractCard({ hit }: { hit: ApiSearchHit }) {
         <RiskBadge nivel={c.nivel_riesgo ?? ''} score={score} />
       </div>
 
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11px] mb-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 text-[11px] mb-3">
         <div>
           <span className="text-[#7c7f88]">Entidad:</span>{' '}
           <span className="text-[#232730] font-medium">{c.entidad_nombre}</span>

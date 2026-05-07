@@ -1,11 +1,11 @@
 'use client'
 
-import { Bell, RefreshCw, Database } from 'lucide-react'
+import { Bell, RefreshCw, Database, Menu } from 'lucide-react'
 import Link from 'next/link'
 import { useState, useEffect } from 'react'
 import { listContratos } from '@/lib/api'
 
-export function Header({ title, subtitle }: { title: string; subtitle?: string }) {
+export function Header({ title, subtitle, onMenuClick }: { title: string; subtitle?: string; onMenuClick?: () => void }) {
   const [lastUpdate, setLastUpdate] = useState<string>('')
   const [contractsCount, setContractsCount] = useState<number | null>(null)
 
@@ -27,7 +27,16 @@ export function Header({ title, subtitle }: { title: string; subtitle?: string }
   }, [])
 
   return (
-    <header className="h-14 bg-white border-b border-[#e3e4e8] flex items-center px-6 gap-4">
+    <header className="h-14 bg-white border-b border-[#e3e4e8] flex items-center px-4 md:px-6 gap-3">
+      {/* Hamburger — mobile only */}
+      <button
+        onClick={onMenuClick}
+        className="md:hidden p-2 rounded-lg hover:bg-[#f6f6f8] transition-colors shrink-0"
+        aria-label="Abrir menú"
+      >
+        <Menu className="w-4 h-4 text-[#232730]" />
+      </button>
+
       <div className="flex-1 min-w-0">
         <h1 className="text-[15px] font-semibold text-[#011821] leading-none tracking-tight">{title}</h1>
         {subtitle && <p className="text-[12px] text-[#7c7f88] mt-0.5">{subtitle}</p>}

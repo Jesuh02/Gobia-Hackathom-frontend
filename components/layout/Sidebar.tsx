@@ -12,6 +12,7 @@ import {
   ChevronRight,
   Activity,
   DatabaseZap,
+  X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -55,21 +56,38 @@ const NAV_ITEMS = [
   },
 ]
 
-export function Sidebar() {
+export function Sidebar({ open, onClose }: { open?: boolean; onClose?: () => void }) {
   const pathname = usePathname()
 
   return (
-    <aside className="fixed left-0 top-0 h-screen w-64 bg-white border-r border-[#e3e4e8] flex flex-col z-40">
-      {/* Logo */}
+    <aside
+      className={cn(
+        'fixed left-0 top-0 h-screen w-64 bg-white border-r border-[#e3e4e8] flex flex-col z-40',
+        'transition-transform duration-300 ease-in-out',
+        // Mobile: hidden by default, visible when open
+        open ? 'translate-x-0' : '-translate-x-full',
+        // Desktop: always visible
+        'md:translate-x-0',
+      )}
+    >
+      {/* Logo + close button (mobile) */}
       <div className="px-6 py-5 border-b border-[#e3e4e8]">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-[#111a4a] flex items-center justify-center">
+          <div className="w-8 h-8 rounded-lg bg-[#111a4a] flex items-center justify-center shrink-0">
             <ShieldAlert className="w-4 h-4 text-white" />
           </div>
-          <div>
+          <div className="flex-1 min-w-0">
             <p className="text-[13px] font-semibold text-[#011821] tracking-tight leading-none">GobIA Auditor</p>
             <p className="text-[10px] text-[#7c7f88] mt-0.5 font-mono">SECOP II · v1.0</p>
           </div>
+          {/* Close button — mobile only */}
+          <button
+            onClick={onClose}
+            className="md:hidden p-1 rounded-lg hover:bg-[#f6f6f8] transition-colors"
+            aria-label="Cerrar menú"
+          >
+            <X className="w-4 h-4 text-[#7c7f88]" />
+          </button>
         </div>
       </div>
 
@@ -96,6 +114,7 @@ export function Sidebar() {
               <li key={item.href}>
                 <Link
                   href={item.href}
+                  onClick={onClose}
                   className={cn(
                     'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all group',
                     isActive
