@@ -29,7 +29,9 @@ jobs:
       - name: Build
         run: pnpm run build
         env:
-          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
+          # Falls back to the committed .env.production value if the secret is unset,
+          # so deployments never accidentally bake in localhost.
+          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL || 'https://gobia-hackathom-production.up.railway.app' }}
 
       - name: Deploy to Cloudflare Pages
         env:
