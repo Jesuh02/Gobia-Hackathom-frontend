@@ -1,0 +1,120 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* GobIA Auditor — Design Tokens */
+  --color-ink-blue: #011821;
+  --color-ghost-white: #ffffff;
+  --color-fog-gray: #f6f6f8;
+  --color-steel-gray: #e3e4e8;
+  --color-charcoal-text: #232730;
+  --color-slate-text: #7c7f88;
+  --color-deep-plum: #111a4a;
+  --color-action-orange: #ec652b;
+  --color-success-moss: #44b48b;
+  --color-notification-teal: #88deeb;
+
+  /* Risk */
+  --color-risk-high: #dc2626;
+  --color-risk-medium: #f59e0b;
+  --color-risk-low: #44b48b;
+
+  /* Shadcn tokens */
+  --background: 0 0% 100%;
+  --foreground: 201 95% 5%;
+  --card: 0 0% 100%;
+  --card-foreground: 201 95% 5%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 201 95% 5%;
+  --primary: 236 62% 17%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 11% 96%;
+  --secondary-foreground: 228 14% 17%;
+  --muted: 240 11% 96%;
+  --muted-foreground: 225 4% 49%;
+  --accent: 18 82% 55%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 228 9% 89%;
+  --input: 228 9% 89%;
+  --ring: 236 62% 17%;
+  --radius: 0.5rem;
+  --chart-1: #ec652b;
+  --chart-2: #111a4a;
+  --chart-3: #44b48b;
+  --chart-4: #7ea7e9;
+  --chart-5: #f59e0b;
+}
+
+@theme inline {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-ibm-plex-mono), ui-monospace, SFMono-Regular, monospace;
+
+  --color-background: var(--color-ghost-white);
+  --color-foreground: var(--color-ink-blue);
+  --color-card: var(--color-ghost-white);
+  --color-card-foreground: var(--color-ink-blue);
+  --color-popover: var(--color-ghost-white);
+  --color-popover-foreground: var(--color-ink-blue);
+  --color-primary: var(--color-deep-plum);
+  --color-primary-foreground: var(--color-ghost-white);
+  --color-secondary: var(--color-fog-gray);
+  --color-secondary-foreground: var(--color-charcoal-text);
+  --color-muted: var(--color-fog-gray);
+  --color-muted-foreground: var(--color-slate-text);
+  --color-accent: var(--color-action-orange);
+  --color-accent-foreground: var(--color-ghost-white);
+  --color-destructive: var(--color-risk-high);
+  --color-destructive-foreground: var(--color-ghost-white);
+  --color-border: var(--color-steel-gray);
+  --color-input: var(--color-steel-gray);
+  --color-ring: var(--color-deep-plum);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    letter-spacing: -0.02em;
+    font-weight: 600;
+  }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #f6f6f8; }
+::-webkit-scrollbar-thumb { background: #e3e4e8; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #7c7f88; }
+
+/* Heatmap cell hover */
+.heatmap-cell {
+  transition: all 0.15s ease;
+}
+.heatmap-cell:hover {
+  filter: brightness(0.85);
+  cursor: pointer;
+}
+
+/* Pulse animation */
+@keyframes pulse-alert {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.pulse-alert { animation: pulse-alert 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
