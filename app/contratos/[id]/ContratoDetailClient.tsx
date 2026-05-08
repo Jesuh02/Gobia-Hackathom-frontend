@@ -310,6 +310,11 @@ export default function ContratoDetailPage() {
   )
 
   const analysisSummary = useMemo(() => {
+    // Prefer real LLM justification when available
+    if (justificacion && justificacion !== 'Sin análisis de agente disponible para este contrato.' && justificacion !== 'Aún no existe evaluación vigente para este contrato.') {
+      return justificacion
+    }
+
     const findings = mergedFieldAlerts
       .slice()
       .sort((a, b) => b.score - a.score)
@@ -321,7 +326,7 @@ export default function ContratoDetailPage() {
     }
 
     return `Se detectaron ${mergedFieldAlerts.length} alerta(s). Hallazgos clave: ${findings.join(' | ')}.`
-  }, [mergedFieldAlerts])
+  }, [mergedFieldAlerts, justificacion])
 
   useEffect(() => {
     let active = true
@@ -618,8 +623,6 @@ export default function ContratoDetailPage() {
               </div>
 
               <div className="prose-sm">
-                <p className="text-[11px] font-semibold text-[#7c7f88] uppercase tracking-wider mb-2">Justificación en lenguaje natural</p>
-                <p className="text-[13px] text-[#232730] leading-relaxed">{justificacion}</p>
                 {reevaluating && (
                   <p className="text-[11px] text-[#d97706] mt-2">
                     Reevaluando contrato para corregir score en cero y recalcular indicadores...
