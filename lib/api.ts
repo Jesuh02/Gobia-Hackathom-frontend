@@ -4,7 +4,12 @@
  * All types mirror the Pydantic schemas defined in the backend.
  */
 
-const BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000').replace(/\/$/, '')
+// En producción (Vercel) usamos ruta relativa para que el proxy rewrite de next.config.mjs
+// envíe el request al backend server-side, evitando CORS.
+// En desarrollo local apunta directo al backend.
+const BASE_URL = typeof window !== 'undefined' && process.env.NODE_ENV === 'production'
+  ? ''
+  : (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000').replace(/\/$/, '')
 const PREFIX = '/api/v1'
 
 // ─── Raw backend schemas ──────────────────────────────────────────────────────
@@ -36,6 +41,16 @@ export interface ApiContractSchema {
   fecha_fin: string | null
   categoria_unspsc_id: number | null
   municipio_ejecucion_id: number | null
+  json_raw: Record<string, unknown>
+}
+
+export interface ApiFieldAlert {
+  code: string
+  name: string
+  severity: 'BAJA' | 'MEDIA' | 'ALTA' | 'CRITICA'
+  field: string
+  detail: string
+  score: number
 }
 
 export interface ApiIndicatorResult {
@@ -84,6 +99,8 @@ export interface ApiContractDetail {
   evaluacion: ApiEvaluation | null
   adiciones: ApiAdicion[]
   garantias: ApiGarantia[]
+  field_alerts: ApiFieldAlert[]
+  url_proceso_info: Record<string, unknown> | null
 }
 
 export interface ApiContractListResponse {

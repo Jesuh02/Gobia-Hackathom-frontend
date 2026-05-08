@@ -1,10 +1,10 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useSearchParams, usePathname } from 'next/navigation'
 import { AppShell } from '@/components/layout/AppShell'
 import { formatCOP } from '@/lib/api'
-import { getContrato, mapNivelRiesgo, toNumber, computePlazo, type FrontendRiskLevel, type ApiIndicatorResult } from '@/lib/api'
+import { evaluarContrato, getContrato, mapNivelRiesgo, toNumber, computePlazo, type FrontendRiskLevel, type ApiIndicatorResult, type ApiFieldAlert } from '@/lib/api'
 import {
   ArrowLeft,
   Download,
@@ -19,6 +19,9 @@ import {
   FileText,
   Cpu,
   Share2,
+  ExternalLink,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react'
 import Link from 'next/link'
 import {
@@ -33,6 +36,72 @@ function getRiskConfig(nivel: FrontendRiskLevel) {
     medio: { bg: '#fffbeb', border: '#fde68a', text: '#d97706', label: 'RIESGO MEDIO', icon: Info },
     bajo: { bg: '#f0fdf4', border: '#bbf7d0', text: '#16a34a', label: 'BAJO RIESGO', icon: CheckCircle },
   }[nivel]
+}
+
+function getJsonString(obj: Record<string, unknown>, key: string): string | null {
+  const value = obj[key]
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : null
+}
+
+function getNestedUrl(value: unknown): string | null {
+  if (typeof value === 'string') return value.trim() || null
+  if (value && typeof value === 'object') {
+    const maybeUrl = (value as Record<string, unknown>).url
+    if (typeof maybeUrl === 'string' && maybeUrl.trim()) return maybeUrl.trim()
+  }
+  return null
+}
+
+function isSecopGenericPortal(url: string): boolean {
+  const u = url.toLowerCase()
+  return (
+    u === 'https://www.secop.gov.co/' ||
+    u === 'https://www.secop.gov.co' ||
+    u === 'http://www.secop.gov.co/' ||
+    u === 'http://www.secop.gov.co' ||
+    u === 'https://secop.gov.co/' ||
+    u === 'https://secop.gov.co' ||
+    u === 'http://secop.gov.co/' ||
+    u === 'http://secop.gov.co'
+  )
+}
+
+function resolveBestProcessUrl(
+  urlProcesoInfo: Record<string, unknown> | null,
+  jsonRaw: Record<string, unknown>
+): string | null {
+  const candidates = [
+    urlProcesoInfo ? getJsonString(urlProcesoInfo, '_url_proceso') : null,
+    urlProcesoInfo ? getJsonString(urlProcesoInfo, '_url') : null,
+    getJsonString(jsonRaw, '_url_proceso'),
+    getNestedUrl(jsonRaw.urlproceso),
+    getJsonString(jsonRaw, 'url_proceso'),
+    getJsonString(jsonRaw, 'url_del_proceso'),
+  ].filter((v): v is string => Boolean(v && v.startsWith('http')))
+
+  const specific = candidates.find((url) => !isSecopGenericPortal(url))
+  return specific ?? candidates[0] ?? null
+}
+
+function getModalidadText(jsonRaw: Record<string, unknown>): string {
+  return (
+    getJsonString(jsonRaw, 'modalidad_de_contratacion') ??
+    getJsonString(jsonRaw, 'modalidad_de_contrataci_n') ??
+    'No informada'
+  )
+}
+
+function mapModalidadToCodigo(modalidad: string): string | undefined {
+  const m = modalidad.toUpperCase()
+  if (m.includes('DIRECTA')) return 'CD'
+  if (m.includes('URGENCIA')) return 'UM'
+  if (m.includes('ABREVIADA')) return 'SA'
+  if (m.includes('LICITACION') || m.includes('LICITACIÓN')) return 'LP'
+  if (m.includes('MINIMA') || m.includes('MÍNIMA')) return 'MC'
+  if (m.includes('CONCURSO')) return 'CM'
+  return undefined
 }
 
 const INDICATOR_WEIGHTS = [
@@ -143,52 +212,221 @@ export default function ContratoDetailPage() {
   const [fechaFirma, setFechaFirma] = useState('')
   const [plazoDias, setPlazoDias] = useState(0)
   const [estado, setEstado] = useState('activo')
+  const [modalidad, setModalidad] = useState('No informada')
   const [adicionesValor, setAdicionesValor] = useState(0)
   const [scoreRiesgo, setScoreRiesgo] = useState(0)
   const [nivelRiesgo, setNivelRiesgo] = useState<FrontendRiskLevel>('bajo')
   const [factorLlm, setFactorLlm] = useState(1.0)
+  const [scoreLlm, setScoreLlm] = useState<number | null>(null)
   const [scoreBase, setScoreBase] = useState(0)
   const [redFlags, setRedFlags] = useState<{ indicador: string; descripcion: string; peso: number }[]>([])
   const [justificacion, setJustificacion] = useState('')
   const [indicators, setIndicators] = useState<ApiIndicatorResult[]>([])
+  const [fieldAlerts, setFieldAlerts] = useState<ApiFieldAlert[]>([])
+  const [urlProcesoInfo, setUrlProcesoInfo] = useState<Record<string, unknown> | null>(null)
+  const [jsonRaw, setJsonRaw] = useState<Record<string, unknown>>({})
+  const [showAllFields, setShowAllFields] = useState(false)
+  const [reevaluating, setReevaluating] = useState(false)
+
+  const computedFieldAlerts = useMemo<ApiFieldAlert[]>(() => {
+    const alerts: ApiFieldAlert[] = []
+    const fechaInicio = getJsonString(jsonRaw, 'fecha_de_inicio_del_contrato') ?? getJsonString(jsonRaw, 'fecha_inicio_ejecucion')
+    const fechaFin = getJsonString(jsonRaw, 'fecha_de_fin_del_contrato') ?? getJsonString(jsonRaw, 'fecha_fin_ejecucion')
+    const hasInvalidScore = scoreRiesgo === 0 && scoreBase === 0 && indicators.length === 0
+
+    if (valor <= 0) {
+      alerts.push({
+        code: 'FRONT_VALOR_CERO',
+        name: 'Valor contractual atípico',
+        severity: 'ALTA',
+        field: 'valor_inicial',
+        detail: 'El valor del contrato es 0 o no fue informado. Requiere validación manual.',
+        score: 90,
+      })
+    }
+
+    if (modalidad === 'No informada') {
+      alerts.push({
+        code: 'FRONT_MODALIDAD_FALTANTE',
+        name: 'Modalidad faltante',
+        severity: 'MEDIA',
+        field: 'modalidad_de_contratacion',
+        detail: 'No se encontró modalidad de contratación en el JSON del proceso.',
+        score: 65,
+      })
+    }
+
+    if (fechaInicio && fechaFin) {
+      const ini = new Date(fechaInicio)
+      const fin = new Date(fechaFin)
+      if (!Number.isNaN(ini.getTime()) && !Number.isNaN(fin.getTime()) && fin < ini) {
+        alerts.push({
+          code: 'FRONT_FECHAS_INCOHERENTES',
+          name: 'Fechas inconsistentes',
+          severity: 'ALTA',
+          field: 'fecha_de_fin_del_contrato',
+          detail: 'La fecha de fin es anterior a la fecha de inicio del contrato.',
+          score: 88,
+        })
+      }
+    }
+
+    if (hasInvalidScore) {
+      alerts.push({
+        code: 'FRONT_SCORE_NO_CALCULADO',
+        name: 'Evaluación sin resultado',
+        severity: 'MEDIA',
+        field: 'score_final',
+        detail: 'El score final quedó en 0 sin indicadores activos; puede faltar reevaluación o datos de entrada.',
+        score: 60,
+      })
+    }
+
+    if (reevaluating) {
+      alerts.push({
+        code: 'FRONT_REEVAL_RUNNING',
+        name: 'Reevaluación en curso',
+        severity: 'BAJA',
+        field: 'evaluacion',
+        detail: 'Se está ejecutando una nueva evaluación para recalcular el score del contrato.',
+        score: 20,
+      })
+    }
+
+    return alerts
+  }, [jsonRaw, valor, modalidad, scoreRiesgo, scoreBase, indicators.length, reevaluating])
+
+  const mergedFieldAlerts = useMemo(() => {
+    const map = new Map<string, ApiFieldAlert>()
+    for (const alert of [...fieldAlerts, ...computedFieldAlerts]) {
+      map.set(`${alert.field}:${alert.code}`, alert)
+    }
+    return [...map.values()]
+  }, [fieldAlerts, computedFieldAlerts])
+
+  const processUrl = useMemo(
+    () => resolveBestProcessUrl(urlProcesoInfo, jsonRaw),
+    [urlProcesoInfo, jsonRaw]
+  )
+
+  const analysisSummary = useMemo(() => {
+    const findings = mergedFieldAlerts
+      .slice()
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 4)
+      .map((a) => `${a.field}: ${a.detail}`)
+
+    if (findings.length === 0) {
+      return 'No se detectaron inconsistencias estructurales relevantes en los campos disponibles del contrato. Aun así, se recomienda validación humana del expediente y sus anexos.'
+    }
+
+    return `Se detectaron ${mergedFieldAlerts.length} alerta(s). Hallazgos clave: ${findings.join(' | ')}.`
+  }, [mergedFieldAlerts])
 
   useEffect(() => {
-    setLoading(true)
-    getContrato(id)
-      .then((detail) => {
-        const c = detail.contrato
-        const ev = detail.evaluacion
+    let active = true
 
-        setNumero(c.numero_contrato ?? c.secop_id)
-        setObjeto(c.objeto)
-        setValor(toNumber(c.valor_inicial))
-        setFechaFirma(c.fecha_firma)
-        setPlazoDias(computePlazo(c.fecha_inicio, c.fecha_fin))
-        setEstado(c.estado_id === 1 ? 'activo' : 'terminado')
-        setAdicionesValor(
-          detail.adiciones.reduce((sum, a) => sum + toNumber(a.valor_adicion), 0)
+    const applyDetail = (detail: Awaited<ReturnType<typeof getContrato>>) => {
+      const c = detail.contrato
+      const ev = detail.evaluacion
+      const raw = (c.json_raw as Record<string, unknown>) ?? {}
+
+      const entidadFromRaw = getJsonString(raw, 'entidad') ?? getJsonString(raw, 'nombre_entidad')
+      const proveedorFromRaw =
+        getJsonString(raw, 'nombre_del_proveedor') ??
+        getJsonString(raw, 'proveedor_adjudicado') ??
+        getJsonString(raw, 'proveedor')
+
+      setNumero(c.numero_contrato ?? c.secop_id)
+      setObjeto(c.objeto)
+      setValor(toNumber(c.valor_inicial))
+      setFechaFirma(c.fecha_firma)
+      setPlazoDias(computePlazo(c.fecha_inicio, c.fecha_fin))
+      setEstado(c.estado_id === 1 ? 'activo' : 'terminado')
+      setModalidad(getModalidadText(raw))
+      if (entidadFromRaw) setEntidad(entidadFromRaw)
+      if (proveedorFromRaw) setProveedor(proveedorFromRaw)
+      setAdicionesValor(
+        detail.adiciones.reduce((sum, a) => sum + toNumber(a.valor_adicion), 0)
+      )
+
+      if (ev) {
+        setScoreRiesgo(Math.round(ev.score_final))
+        setNivelRiesgo(mapNivelRiesgo(ev.nivel_riesgo))
+        setFactorLlm(ev.factor_ajuste_llm ?? 1.0)
+        setScoreLlm(ev.score_llm ?? null)
+        setScoreBase(Math.round(ev.score_reglas))
+        setJustificacion(ev.justification ?? 'Sin análisis de agente disponible para este contrato.')
+        setIndicators(ev.indicators)
+        setRedFlags(
+          ev.indicators
+            .filter((ind) => ind.triggered)
+            .map((ind) => ({
+              indicador: ind.name,
+              descripcion: ind.detail,
+              peso: Math.round(ind.weight),
+            }))
         )
+      } else {
+        setScoreRiesgo(0)
+        setNivelRiesgo('bajo')
+        setFactorLlm(1)
+        setScoreLlm(null)
+        setScoreBase(0)
+        setJustificacion('Aún no existe evaluación vigente para este contrato.')
+        setIndicators([])
+        setRedFlags([])
+      }
 
-        if (ev) {
-          setScoreRiesgo(Math.round(ev.score_final))
-          setNivelRiesgo(mapNivelRiesgo(ev.nivel_riesgo))
-          setFactorLlm(ev.factor_ajuste_llm ?? 1.0)
-          setScoreBase(Math.round(ev.score_reglas))
-          setJustificacion(ev.justification ?? 'Sin análisis de agente disponible para este contrato.')
-          setIndicators(ev.indicators)
-          setRedFlags(
-            ev.indicators
-              .filter((ind) => ind.triggered)
-              .map((ind) => ({
-                indicador: ind.name,
-                descripcion: ind.detail,
-                peso: Math.round(ind.weight),
-              }))
-          )
+      setFieldAlerts(detail.field_alerts ?? [])
+      setUrlProcesoInfo(detail.url_proceso_info ?? null)
+      setJsonRaw(raw)
+    }
+
+    const shouldReevaluate = (detail: Awaited<ReturnType<typeof getContrato>>) => {
+      const ev = detail.evaluacion
+      if (!ev) return true
+      const scoreZero = Math.round(ev.score_final) === 0 && Math.round(ev.score_reglas) === 0
+      const noSignals = (ev.indicators ?? []).every((ind) => !ind.triggered)
+      return scoreZero && noSignals
+    }
+
+    const load = async () => {
+      setLoading(true)
+      setApiError(null)
+      try {
+        const first = await getContrato(id)
+        if (!active) return
+
+        if (shouldReevaluate(first)) {
+          const raw = (first.contrato.json_raw as Record<string, unknown>) ?? {}
+          const modalidadCodigo = mapModalidadToCodigo(getModalidadText(raw))
+          setReevaluating(true)
+          try {
+            await evaluarContrato(id, modalidadCodigo, true)
+            const refreshed = await getContrato(id)
+            if (!active) return
+            applyDetail(refreshed)
+          } catch {
+            applyDetail(first)
+          } finally {
+            if (active) setReevaluating(false)
+          }
+        } else {
+          applyDetail(first)
         }
-      })
-      .catch((err) => setApiError(err instanceof Error ? err.message : 'Error al cargar contrato'))
-      .finally(() => setLoading(false))
+      } catch (err) {
+        if (active) setApiError(err instanceof Error ? err.message : 'Error al cargar contrato')
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+
+    load()
+
+    return () => {
+      active = false
+    }
   }, [id])
 
   const cfg = getRiskConfig(nivelRiesgo)
@@ -297,6 +535,7 @@ export default function ContratoDetailPage() {
                   { icon: Building, label: 'Entidad contratante', value: entidad },
                   { icon: User, label: 'Proveedor / Contratista', value: proveedor },
                   { icon: DollarSign, label: 'Valor del contrato', value: formatCOP(valor), mono: true, highlight: true },
+                  { icon: FileText, label: 'Modalidad', value: modalidad, warn: modalidad === 'No informada' },
                   { icon: Calendar, label: 'Fecha de firma', value: fechaFirma },
                   { icon: Clock, label: 'Plazo', value: plazoDias > 0 ? `${plazoDias} días` : '—', warn: plazoDias > 0 && plazoDias < 30 },
                   { icon: Info, label: 'Estado', value: estado.charAt(0).toUpperCase() + estado.slice(1) },
@@ -324,6 +563,14 @@ export default function ContratoDetailPage() {
           </div>
         </div>
 
+        {/* Campos detallados del contrato en la parte superior */}
+        <RawContractFields
+          jsonRaw={jsonRaw}
+          fieldAlerts={mergedFieldAlerts}
+          showAll={showAllFields}
+          onToggle={() => setShowAllFields(!showAllFields)}
+        />
+
         {/* Main content: 2 columns */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Left: Agent report */}
@@ -338,8 +585,8 @@ export default function ContratoDetailPage() {
                   <Cpu className="w-3.5 h-3.5 text-white" />
                 </div>
                 <div>
-                  <p className="text-[13px] font-semibold text-[#011821]">Análisis del Agente LLM</p>
-                  <p className="text-[10px] text-[#7c7f88]">Qwen3.6 Plus via OpenRouter · ReAct Agent · LangGraph</p>
+                  <p className="text-[13px] font-semibold text-[#011821]">Resumen de análisis del contrato</p>
+                  <p className="text-[10px] text-[#7c7f88]">Síntesis automática basada en datos API + alertas por campo</p>
                 </div>
                 <div className="ml-auto flex items-center gap-1.5 px-2.5 py-1 bg-[#f0fdf4] rounded border border-[#bbf7d0]">
                   <span className="w-1.5 h-1.5 rounded-full bg-[#44b48b]" />
@@ -347,32 +594,37 @@ export default function ContratoDetailPage() {
                 </div>
               </div>
 
-              {/* Prompt simulation */}
-              <div className="bg-[#f6f6f8] rounded-lg p-3 mb-4 border border-[#e3e4e8]">
-                <p className="text-[9px] font-semibold text-[#7c7f88] uppercase tracking-wider mb-1">Prompt del agente (system)</p>
-                <p className="text-[10px] font-mono text-[#232730] leading-relaxed">
-                  {`Eres un auditor experto en contratación pública colombiana. Analiza el contrato y devuelve SOLO JSON con este schema: {score_llm: 0-100, factor_ajuste: 0.8-1.2, red_flags: [str], justificacion: str}`}
-                </p>
-              </div>
-
-              <div className="bg-[#011821] rounded-lg p-4 mb-4">
-                <p className="text-[9px] font-semibold text-[#88deeb] uppercase tracking-wider mb-2 font-mono">
-                  RESPUESTA DEL AGENTE · JSON ESTRUCTURADO
-                </p>
-                <pre className="text-[10px] font-mono text-white/80 leading-relaxed overflow-x-auto whitespace-pre-wrap">
-{`{
-  "score_llm": ${factorLlm > 0 ? Math.round(scoreRiesgo / factorLlm) : scoreBase},
-  "factor_ajuste": ${factorLlm.toFixed(2)},
-  "score_final": ${scoreRiesgo},
-  "red_flags": ${JSON.stringify(redFlags.map(f => f.indicador), null, 2)},
-  "nivel_riesgo": "${nivelRiesgo}"
-}`}
-                </pre>
+              <div className="bg-[#f6f6f8] rounded-lg p-4 mb-4 border border-[#e3e4e8]">
+                <p className="text-[11px] font-semibold text-[#011821] mb-2">Resumen ejecutivo</p>
+                <p className="text-[12px] text-[#232730] leading-relaxed">{analysisSummary}</p>
+                <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-[10px]">
+                  <div className="rounded border border-[#e3e4e8] bg-white p-2">
+                    <p className="text-[#7c7f88]">Score reglas</p>
+                    <p className="font-mono font-semibold text-[#011821]">{scoreBase}</p>
+                  </div>
+                  <div className="rounded border border-[#e3e4e8] bg-white p-2">
+                    <p className="text-[#7c7f88]">Score LLM</p>
+                    <p className="font-mono font-semibold text-[#011821]">{scoreLlm ?? 'N/D'}</p>
+                  </div>
+                  <div className="rounded border border-[#e3e4e8] bg-white p-2">
+                    <p className="text-[#7c7f88]">Factor LLM</p>
+                    <p className="font-mono font-semibold text-[#011821]">×{factorLlm.toFixed(2)}</p>
+                  </div>
+                  <div className="rounded border border-[#e3e4e8] bg-white p-2">
+                    <p className="text-[#7c7f88]">Score final</p>
+                    <p className="font-mono font-semibold" style={{ color: cfg.text }}>{scoreRiesgo}</p>
+                  </div>
+                </div>
               </div>
 
               <div className="prose-sm">
                 <p className="text-[11px] font-semibold text-[#7c7f88] uppercase tracking-wider mb-2">Justificación en lenguaje natural</p>
                 <p className="text-[13px] text-[#232730] leading-relaxed">{justificacion}</p>
+                {reevaluating && (
+                  <p className="text-[11px] text-[#d97706] mt-2">
+                    Reevaluando contrato para corregir score en cero y recalcular indicadores...
+                  </p>
+                )}
               </div>
             </div>
 
@@ -536,6 +788,307 @@ export default function ContratoDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* ── Sección: Información de la URL del proceso ── */}
+      {urlProcesoInfo && (
+        <ProcesoUrlInfo info={urlProcesoInfo} processUrl={processUrl} />
+      )}
     </AppShell>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Componente: todos los campos del JSON crudo con alertas por campo
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SEVERITY_CONFIG = {
+  CRITICA: { bg: '#fef2f2', border: '#fecaca', text: '#dc2626', label: 'CRÍTICA' },
+  ALTA:    { bg: '#fff7ed', border: '#fed7aa', text: '#ea580c', label: 'ALTA' },
+  MEDIA:   { bg: '#fffbeb', border: '#fde68a', text: '#d97706', label: 'MEDIA' },
+  BAJA:    { bg: '#f0fdf4', border: '#bbf7d0', text: '#16a34a', label: 'BAJA' },
+} as const
+
+// Campos que se muestran siempre (primeros en la vista resumida)
+const PRIORITY_FIELDS = [
+  'id_del_proceso', 'referencia_del_proceso', 'entidad', 'nit_entidad',
+  'nombre_del_procedimiento', 'descripci_n_del_procedimiento',
+  'precio_base', 'modalidad_de_contratacion', 'justificaci_n_modalidad_de',
+  'estado_del_procedimiento', 'adjudicado', 'nombre_del_proveedor',
+  'nit_del_proveedor_adjudicado', 'valor_total_adjudicacion',
+  'proveedores_invitados', 'proveedores_con_invitacion',
+  'respuestas_al_procedimiento', 'tipo_de_contrato', 'duracion', 'unidad_de_duracion',
+  'fase', 'fecha_de_publicacion_del', 'ciudad_entidad', 'departamento_entidad',
+]
+
+function formatFieldValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '—'
+  if (typeof value === 'object') {
+    if ('url' in (value as Record<string, unknown>)) {
+      return String((value as Record<string, unknown>).url)
+    }
+    return JSON.stringify(value)
+  }
+  return String(value)
+}
+
+function FieldRow({
+  fieldKey,
+  value,
+  alert,
+}: {
+  fieldKey: string
+  value: unknown
+  alert?: ApiFieldAlert
+}) {
+  const formatted = formatFieldValue(value)
+  const isUrl = formatted.startsWith('http')
+  const cfg = alert ? SEVERITY_CONFIG[alert.severity] : null
+
+  return (
+    <div
+      className="rounded-lg p-3 border transition-colors"
+      style={cfg
+        ? { backgroundColor: cfg.bg, borderColor: cfg.border }
+        : { backgroundColor: '#fafafa', borderColor: '#e3e4e8' }}
+    >
+      <div className="flex items-start justify-between gap-2 mb-1">
+        <span className="text-[10px] font-mono text-[#7c7f88] break-all">{fieldKey}</span>
+        {cfg && (
+          <span
+            className="shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full border"
+            style={{ color: cfg.text, borderColor: cfg.border, backgroundColor: '#ffffff88' }}
+          >
+            {cfg.label}
+          </span>
+        )}
+      </div>
+
+      {isUrl ? (
+        <a
+          href={formatted}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[11px] text-[#3b82f6] underline underline-offset-2 break-all flex items-center gap-1"
+        >
+          {formatted.length > 60 ? formatted.slice(0, 60) + '…' : formatted}
+          <ExternalLink className="w-3 h-3 shrink-0" />
+        </a>
+      ) : (
+        <p
+          className="text-[12px] font-medium break-words"
+          style={{ color: cfg ? cfg.text : '#232730' }}
+        >
+          {formatted}
+        </p>
+      )}
+
+      {alert && (
+        <div className="mt-2 flex items-start gap-1.5">
+          <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" style={{ color: cfg!.text }} />
+          <p className="text-[10px] leading-snug" style={{ color: cfg!.text }}>
+            {alert.detail}
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function RawContractFields({
+  jsonRaw,
+  fieldAlerts,
+  showAll,
+  onToggle,
+}: {
+  jsonRaw: Record<string, unknown>
+  fieldAlerts: ApiFieldAlert[]
+  showAll: boolean
+  onToggle: () => void
+}) {
+  const alertsByField = Object.fromEntries(fieldAlerts.map((a) => [a.field, a]))
+
+  const allKeys = Object.keys(jsonRaw).filter((k) => !k.startsWith('_'))
+  const priorityKeys = PRIORITY_FIELDS.filter((k) => k in jsonRaw)
+  const otherKeys = allKeys.filter((k) => !PRIORITY_FIELDS.includes(k))
+
+  const visibleKeys = showAll ? [...priorityKeys, ...otherKeys] : priorityKeys
+
+  if (allKeys.length === 0) return null
+
+  return (
+    <div
+      className="mt-6 bg-white rounded-lg border border-[#e3e4e8] overflow-hidden"
+      style={{ boxShadow: 'rgba(17, 26, 74, 0.05) 0px 0px 0px 1px, rgba(0, 0, 0, 0.06) 0px 1px 4px 0px' }}
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between px-5 py-4 border-b border-[#e3e4e8]">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-[#f6f6f8] border border-[#e3e4e8] flex items-center justify-center">
+            <FileText className="w-3.5 h-3.5 text-[#7c7f88]" />
+          </div>
+          <div>
+            <p className="text-[13px] font-semibold text-[#011821]">
+              Datos Completos del Contrato
+            </p>
+            <p className="text-[10px] text-[#7c7f88]">
+              Fuente: SECOP II / SODA 2 · {allKeys.length} campos disponibles
+              {fieldAlerts.length > 0 && (
+                <span className="ml-2 text-[#dc2626] font-semibold">
+                  · {fieldAlerts.length} alerta(s) detectada(s)
+                </span>
+              )}
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={onToggle}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-[#7c7f88] bg-[#f6f6f8] border border-[#e3e4e8] rounded-lg hover:bg-[#ededf0] transition-colors"
+        >
+          {showAll ? (
+            <>Mostrar menos <ChevronUp className="w-3.5 h-3.5" /></>
+          ) : (
+            <>Ver todos ({allKeys.length}) <ChevronDown className="w-3.5 h-3.5" /></>
+          )}
+        </button>
+      </div>
+
+      {/* Fields grid */}
+      <div className="p-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+        {visibleKeys.map((k) => (
+          <FieldRow
+            key={k}
+            fieldKey={k}
+            value={jsonRaw[k]}
+            alert={alertsByField[k]}
+          />
+        ))}
+      </div>
+
+      {!showAll && otherKeys.length > 0 && (
+        <div className="px-5 pb-4 text-center">
+          <button
+            onClick={onToggle}
+            className="text-[11px] text-[#7c7f88] hover:text-[#011821] transition-colors"
+          >
+            + {otherKeys.length} campos más (incluyendo datos internos del proceso)
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Componente: información obtenida de la URL del proceso
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ProcesoUrlInfo({ info, processUrl }: { info: Record<string, unknown>; processUrl?: string | null }) {
+  const url = processUrl ?? (info['_url'] as string | undefined)
+  const error = info['_error'] as string | null | undefined
+  const displayFields = Object.entries(info).filter(
+    ([k]) => !k.startsWith('_') && k !== 'documentos_adjuntos'
+  )
+  const docs = info['documentos_adjuntos'] as string[] | undefined
+
+  return (
+    <div
+      className="mt-4 bg-white rounded-lg border border-[#e3e4e8] overflow-hidden"
+      style={{ boxShadow: 'rgba(17, 26, 74, 0.05) 0px 0px 0px 1px, rgba(0, 0, 0, 0.06) 0px 1px 4px 0px' }}
+    >
+      <div className="flex items-center justify-between px-5 py-4 border-b border-[#e3e4e8]">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-[#eff6ff] border border-[#bfdbfe] flex items-center justify-center">
+            <ExternalLink className="w-3.5 h-3.5 text-[#3b82f6]" />
+          </div>
+          <div>
+            <p className="text-[13px] font-semibold text-[#011821]">
+              Información desde Portal SECOP
+            </p>
+            <p className="text-[10px] text-[#7c7f88]">
+              Datos extraídos de la página pública del proceso
+            </p>
+          </div>
+        </div>
+        {url && (
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-[#3b82f6] bg-[#eff6ff] border border-[#bfdbfe] rounded-lg hover:bg-[#dbeafe] transition-colors"
+          >
+            Ver proceso <ExternalLink className="w-3.5 h-3.5" />
+          </a>
+        )}
+      </div>
+
+      <div className="p-5">
+        {error ? (
+          <div className="flex items-start gap-2 p-3 bg-[#fffbeb] rounded-lg border border-[#fde68a]">
+            <Info className="w-4 h-4 text-[#d97706] shrink-0 mt-0.5" />
+            <div>
+              <p className="text-[12px] font-semibold text-[#d97706]">
+                No se pudo obtener información de la página
+              </p>
+              <p className="text-[11px] text-[#7c7f88] mt-0.5">{String(error)}</p>
+              {url && (
+                <a
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[11px] text-[#3b82f6] underline mt-1 block"
+                >
+                  Abrir manualmente →
+                </a>
+              )}
+            </div>
+          </div>
+        ) : (
+          <>
+            {displayFields.length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mb-4">
+                {displayFields.map(([k, v]) => (
+                  <div key={k} className="rounded-lg p-3 border border-[#e3e4e8] bg-[#fafafa]">
+                    <p className="text-[10px] font-mono text-[#7c7f88] mb-1">
+                      {k.replace(/_pagina$/, '').replace(/_/g, ' ')}
+                    </p>
+                    <p className="text-[12px] font-medium text-[#232730] break-words">
+                      {String(v) || '—'}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {docs && docs.length > 0 && (
+              <div>
+                <p className="text-[11px] font-semibold text-[#7c7f88] uppercase tracking-wider mb-2">
+                  Documentos adjuntos en el portal ({docs.length})
+                </p>
+                <div className="space-y-1.5">
+                  {docs.map((doc, i) => (
+                    <a
+                      key={i}
+                      href={doc}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 p-2 rounded-lg border border-[#e3e4e8] bg-[#f6f6f8] hover:bg-[#ededf0] transition-colors text-[11px] text-[#3b82f6] break-all"
+                    >
+                      <FileText className="w-3.5 h-3.5 shrink-0 text-[#7c7f88]" />
+                      {doc.split('/').pop() || doc}
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {displayFields.length === 0 && (!docs || docs.length === 0) && (
+              <p className="text-[12px] text-[#7c7f88]">
+                La página fue accedida pero no se encontraron campos estructurados.
+              </p>
+            )}
+          </>
+        )}
+      </div>
+    </div>
   )
 }
