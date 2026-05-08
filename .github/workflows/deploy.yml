@@ -24,11 +24,9 @@ jobs:
           version: 10
 
       - name: Install dependencies
-        working-directory: frontend/Gobia-Hackathom-frontend
         run: pnpm install --frozen-lockfile
 
       - name: Deploy to Vercel
-        working-directory: frontend/Gobia-Hackathom-frontend
         run: npx vercel --prod --yes --token=${{ secrets.VERCEL_TOKEN }}
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
